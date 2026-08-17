@@ -1,0 +1,41 @@
+name: Check iPhone 16 Refurbished Stock
+
+on:
+  schedule:
+    # UTC基準。15分おきに実行（日本時間でも15分おき）
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}  # 手動実行もできるようにしておく
+
+permissions:
+  contents: write  # last_state.txt をコミットするために必要
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run stock check
+        env:
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          NOTIFY_TO: ${{ secrets.NOTIFY_TO }}
+        run: python check_stock.py
+
+      - name: Commit updated state
+        run: |
+          git config user.name "stock-watcher-bot"
+          git config user.email "actions@github.com"
+          if [ -n "$(git status --porcelain last_state.txt)" ]; then
+            git add last_state.txt
+            git commit -m "update last_state"
+            git push
+          else
+            echo "状態に変化なし。コミットなし。"
+          fi
