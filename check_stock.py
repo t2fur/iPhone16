@@ -8,7 +8,7 @@ Apple整備済製品ページを監視し、iPhone 16シリーズが入荷した
   NOTIFY_TO          : 通知を受け取るメールアドレス（送信元と同じでも可）
 
 チェック対象: https://www.apple.com/jp/shop/refurbished/iphone
-検知キーワード: "iPhone 16"（このページの商品タイトルに "iPhone 16" という文字列が
+検知キーワード: "iPhone 16"（実際の商品ページへのリンクを持つ商品名にこの文字列が
 含まれるかどうかで判定します）
 """
 
@@ -39,20 +39,46 @@ def fetch_page(url: str) -> str:
         return res.read().decode("utf-8", errors="ignore")
 
 
+def strip_non_content(html: str) -> str:
+    """<script>や<style>タグの中身を除去する。
+    Appleのページには商品フィルター用のJavaScript設定データ(JSON)が
+    埋め込まれており、そこに "iPhone 16 Pro Max" 等の文字列が
+    (実際の在庫の有無に関係なく)常に含まれているため、誤検知の原因になる。
+    """
+    html = re.sub(r"<script\b[^>]*>.*?</script>", " ", html, flags=re.DOTALL | re.IGNORECASE)
+    html = re.sub(r"<style\b[^>]*>.*?</style>", " ", html, flags=re.DOTALL | re.IGNORECASE)
+    return html
+
+
 def extract_matches(html: str, keyword: str) -> list[str]:
-    """商品名っぽい見出し(<h3>や<a>内)からキーワードを含む行を抽出する簡易版"""
-    # ページ内テキストからキーワードを含む商品名候補を抜き出す
-    # (Apple側のマークアップ変更に強くするため、正規表現は緩めに)
-    pattern = re.compile(r"[^<>\n]{0,40}" + re.escape(keyword) + r"[^<>\n]{0,60}")
-    matches = pattern.findall(html)
-    # 重複除去
+    """実際に購入可能な商品一覧だけからキーワードを含む商品名を抽出する。
+
+    Appleのページには「モデルで絞り込む」フィルター欄があり、在庫の有無に
+    関わらず全モデル名（グレーアウト状態のものも含む）が常にHTML上に
+    表示されている。これをそのまま検索すると在庫がなくても誤検知してしまう。
+
+    実際に購入可能な商品は必ず個別の商品ページへのリンク
+    (例: /jp/shop/product/xxxxx/a/iphone-15-...) を持つため、
+    そのリンクのテキスト部分だけを対象に検索することで、
+    フィルター欄などの「表示だけ」の要素を除外する。
+    """
+    content_html = strip_non_content(html)
+
+    # /shop/product/ へのリンクを持つ <a>...</a> のテキスト部分を抽出
+    link_pattern = re.compile(
+        r'<a\b[^>]*href="[^"]*/shop/product/[^"]*"[^>]*>(.*?)</a>',
+        re.DOTALL | re.IGNORECASE,
+    )
+
     seen = set()
     result = []
-    for m in matches:
-        m = m.strip()
-        if m and m not in seen:
-            seen.add(m)
-            result.append(m)
+    for link_html in link_pattern.findall(content_html):
+        # タグを除去してプレーンテキスト化
+        text = re.sub(r"<[^>]+>", " ", link_html)
+        text = re.sub(r"\s+", " ", text).strip()
+        if keyword in text and text not in seen:
+            seen.add(text)
+            result.append(text)
     return result
 
 
